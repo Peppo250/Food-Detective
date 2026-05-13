@@ -16,13 +16,10 @@ def run_server():
 
 
 if __name__ == "__main__":
-    # Start backend in daemon thread so it dies when UI closes
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-
-    # Give the server a moment to bind
     time.sleep(1.2)
 
     root = tk.Tk()
-    app_ui = FoodDetectiveApp(root)
+    FoodDetectiveApp(root)
     root.mainloop()

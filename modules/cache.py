@@ -1,17 +1,6 @@
 """
 modules/cache.py — SQLite-backed ingredient cache with 90-day TTL.
-
-Schema:
-    ingredients(
-        key         TEXT PRIMARY KEY,   -- normalised ingredient name
-        data        TEXT,               -- JSON blob
-        cached_at   INTEGER,            -- unix timestamp of insert
-        expires_at  INTEGER             -- unix timestamp of expiry (cached_at + 90 days)
-    )
-
-Cleanup strategy:
-  - purge_expired() is called on every app startup
-  - A background thread calls it once per day while the app runs
+Auto-purges expired entries on startup and every 24 hours via background thread.
 """
 import json
 import sqlite3
@@ -21,7 +10,7 @@ import os
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "ingredients.db")
-TTL_SECONDS = 90 * 24 * 60 * 60  # 90 days
+TTL_SECONDS = 90 * 24 * 60 * 60   # 90 days
 CLEANUP_INTERVAL = 24 * 60 * 60   # 1 day
 
 
@@ -32,59 +21,37 @@ class IngredientCache:
         self._init_db()
         self._start_cleanup_scheduler()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def get(self, name: str) -> dict | None:
-        """Return cached data for ingredient or None if missing/expired."""
-        key = _normalise_key(name)
+        key = _normalise(name)
         now = int(time.time())
         with self._connect() as con:
             row = con.execute(
                 "SELECT data FROM ingredients WHERE key = ? AND expires_at > ?",
-                (key, now),
-            ).fetchone()
-        if row:
-            return json.loads(row[0])
-        return None
+                (key, now)).fetchone()
+        return json.loads(row[0]) if row else None
 
     def set(self, name: str, data: dict) -> None:
-        """Insert or replace a cache entry."""
-        key = _normalise_key(name)
+        key = _normalise(name)
         now = int(time.time())
-        expires = now + TTL_SECONDS
         with self._connect() as con:
             con.execute(
-                """
-                INSERT OR REPLACE INTO ingredients (key, data, cached_at, expires_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (key, json.dumps(data), now, expires),
-            )
+                "INSERT OR REPLACE INTO ingredients (key, data, cached_at, expires_at) "
+                "VALUES (?, ?, ?, ?)",
+                (key, json.dumps(data), now, now + TTL_SECONDS))
 
     def purge_expired(self) -> int:
-        """Delete all expired entries. Returns number of rows deleted."""
         now = int(time.time())
         with self._connect() as con:
-            cur = con.execute(
-                "DELETE FROM ingredients WHERE expires_at <= ?", (now,)
-            )
-            deleted = cur.rowcount
-        return deleted
+            cur = con.execute("DELETE FROM ingredients WHERE expires_at <= ?", (now,))
+            return cur.rowcount
 
     def stats(self) -> dict:
         now = int(time.time())
         with self._connect() as con:
-            total = con.execute("SELECT COUNT(*) FROM ingredients").fetchone()[0]
+            total  = con.execute("SELECT COUNT(*) FROM ingredients").fetchone()[0]
             active = con.execute(
-                "SELECT COUNT(*) FROM ingredients WHERE expires_at > ?", (now,)
-            ).fetchone()[0]
-        return {"total": total, "active": active, "expired_purged": total - active}
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
+                "SELECT COUNT(*) FROM ingredients WHERE expires_at > ?", (now,)).fetchone()[0]
+        return {"total": total, "active": active}
 
     def _init_db(self):
         with self._connect() as con:
@@ -94,11 +61,9 @@ class IngredientCache:
                     data       TEXT NOT NULL,
                     cached_at  INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL
-                )
-            """)
+                )""")
             con.execute(
-                "CREATE INDEX IF NOT EXISTS idx_expires ON ingredients(expires_at)"
-            )
+                "CREATE INDEX IF NOT EXISTS idx_expires ON ingredients(expires_at)")
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self._db_path, check_same_thread=False)
@@ -115,15 +80,10 @@ class IngredientCache:
                         print(f"[cache] purged {n} expired entries")
                 except Exception as e:
                     print(f"[cache] cleanup error: {e}")
-
-        t = threading.Thread(target=_loop, daemon=True)
-        t.start()
+        threading.Thread(target=_loop, daemon=True).start()
 
 
-def _normalise_key(name: str) -> str:
-    """Lowercase, strip extra whitespace, remove plurals for better hit rate."""
+def _normalise(name: str) -> str:
     key = name.lower().strip()
     key = re.sub(r"\s+", " ", key)
-    # Strip trailing 's' for simple plural normalisation (salt → salt, sugars → sugar)
-    key = re.sub(r"s\b", "", key)
     return key

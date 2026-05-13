@@ -1,6 +1,7 @@
 """
-app.py — FastAPI application factory.
-Exposes POST /scan which accepts an image and streams ingredient results as SSE.
+app.py — FastAPI application.
+Exposes POST /scan — accepts an image, streams ingredient results as SSE,
+then emits a daily_advice event at the end.
 """
 import json
 import asyncio
@@ -12,18 +13,12 @@ from modules.cache import IngredientCache
 from modules.enricher import enrich_ingredient
 from modules.scorer import score_ingredient, overall_score
 from modules.explainer import make_kid_explanation
+from modules.daily_limits import compute_product_advice
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Food Detective API")
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     cache = IngredientCache()
 
     @app.on_event("startup")
@@ -35,7 +30,6 @@ def create_app() -> FastAPI:
         image_bytes = await file.read()
 
         async def event_stream():
-            # Step 1: OCR — yield a status ping first so UI shows activity
             yield _sse("status", {"message": "Reading the label..."})
 
             try:
@@ -48,13 +42,11 @@ def create_app() -> FastAPI:
                 yield _sse("error", {"message": "No ingredients found — try a clearer photo!"})
                 return
 
-            # Emit parsed list to debug tab
             yield _sse("parsed", {"ingredients": ingredients})
             yield _sse("status", {"message": f"Found {len(ingredients)} ingredients! Checking each one..."})
 
-            # Step 2: check cache then fetch misses in parallel
-            hits = []
-            misses = []
+            # Check cache / fetch
+            hits, misses = [], []
             for name in ingredients:
                 cached = cache.get(name)
                 if cached:
@@ -69,7 +61,7 @@ def create_app() -> FastAPI:
                 await asyncio.sleep(0)
 
             # Fetch misses in parallel batches
-            all_results = []
+            all_results = list(hits)
             BATCH = 5
             for i in range(0, len(misses), BATCH):
                 batch = misses[i:i + BATCH]
@@ -85,12 +77,38 @@ def create_app() -> FastAPI:
                     yield _sse("ingredient", result)
                     await asyncio.sleep(0)
 
-            # Overall score from all statuses
-            all_statuses = [d["status"] for _, d in hits] + [d["status"] for _, d in all_results]
+            # Overall score
+            all_statuses = [d["status"] for _, d in all_results]
             score = overall_score(all_statuses)
             yield _sse("done", {"overall_score": score})
 
+            # Daily advice — needs the raw OCR text, which we reconstruct
+            # from ingredient names (the actual OCR text isn't stored here;
+            # the daily advice module works on whatever text we pass it)
+            # For now pass the ingredient list — the module picks up additive limits
+            try:
+                advice = compute_product_advice(
+                    [name for name, _ in all_results],
+                    ocr_text="",        # no raw text here; serving/nutriment parsing
+                    product_name="this product",  # will be set by UI if known
+                )
+                yield _sse("daily_advice", {
+                    "summary": advice.summary,
+                    "detail_lines": advice.detail_lines,
+                    "max_servings": advice.max_servings_display,
+                    "limiting": advice.limiting_ingredient,
+                    "serving_size_g": advice.serving_size_g,
+                })
+            except Exception:
+                pass  # daily advice is best-effort
+
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.post("/scan_with_nutrition")
+    async def scan_with_nutrition(file: UploadFile = File(...), ocr_text: str = ""):
+        """Extended endpoint that accepts raw OCR text for nutrition parsing."""
+        # Placeholder — UI can POST ocr_text alongside image in future
+        pass
 
     @app.get("/health")
     async def health():
