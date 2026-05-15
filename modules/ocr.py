@@ -58,11 +58,73 @@ def _load(image_bytes: bytes) -> Image.Image:
 
 
 def _preprocess(img: Image.Image) -> Image.Image:
+    """
+    Preprocessing pipeline for real phone photos of food labels.
+
+    Handles the hardest cases:
+      - Curved / cylindrical packaging (local contrast instead of global)
+      - Metallic / foil backgrounds with glare (glare masking)
+      - Coloured backgrounds — red, orange, silver (work in greyscale)
+      - Images already large (no unnecessary upscale)
+      - Small/poor quality images (gentle upscale only if needed)
+    """
     w, h = img.size
-    if w < 1200:
-        img = img.resize((w * 2, h * 2), Image.LANCZOS)
-    img = ImageEnhance.Contrast(img).enhance(1.6)
+
+    # ── Step 1: Smart resize ─────────────────────────────────────────────
+    # Phone cameras produce 2000–4000px images. EasyOCR slows down hugely
+    # above ~2000px with diminishing returns. Downscale oversized images.
+    # Only upscale if genuinely small (e.g. cropped thumbnail < 600px).
+    MAX_DIM = 2000
+    MIN_DIM = 600
+
+    long_side = max(w, h)
+    short_side = min(w, h)
+
+    if long_side > MAX_DIM:
+        scale = MAX_DIM / long_side
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        w, h = img.size
+    elif short_side < MIN_DIM:
+        scale = MIN_DIM / short_side
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        w, h = img.size
+
+    # ── Step 2: Glare / highlight suppression ────────────────────────────
+    # Foil and metallic packaging reflects light into blown-out white
+    # patches. These look like valid background to OCR but confuse the
+    # text detector. Replace very bright pixels with mid-grey.
+    arr = np.array(img, dtype=np.float32)
+    glare_mask = np.all(arr > 215, axis=2)           # blown-out pixels
+    arr[glare_mask] = 175                             # replace with mid-grey
+    img = Image.fromarray(arr.astype(np.uint8))
+
+    # ── Step 3: Convert to greyscale ────────────────────────────────────
+    # Coloured backgrounds (red/orange/silver) interfere with contrast
+    # enhancement in RGB. Work in greyscale from here.
+    img = img.convert("L")
+
+    # ── Step 4: Local contrast enhancement (CLAHE substitute) ───────────
+    # Standard global contrast fails on curved packaging because the
+    # background brightness varies across the image.
+    # Unsharp mask with a large radius boosts text relative to local bg.
+    blur_radius = max(15, min(w, h) // 25)  # adaptive: ~4% of short side
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    arr_g = np.array(img, dtype=np.float32)
+    arr_b = np.array(blurred, dtype=np.float32)
+    # Unsharp mask: add back the difference between original and blurred
+    strength = 2.2
+    enhanced = arr_g + strength * (arr_g - arr_b)
+    enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
+    img = Image.fromarray(enhanced)
+
+    # ── Step 5: Global contrast + double sharpen ─────────────────────────
+    img = ImageEnhance.Contrast(img).enhance(1.8)
     img = img.filter(ImageFilter.SHARPEN)
+    img = img.filter(ImageFilter.SHARPEN)  # second pass for soft/blurry photos
+
+    # ── Step 6: Convert back to RGB for EasyOCR ──────────────────────────
+    img = img.convert("RGB")
+
     return img
 
 
@@ -74,12 +136,22 @@ def _ocr(img: Image.Image) -> str:
     reader = _get_reader()
     img_np = np.array(img)
     results = reader.readtext(
-        img_np, detail=1, paragraph=False, batch_size=8,
-        width_ths=0.7, height_ths=0.5, contrast_ths=0.1, adjust_contrast=0.5,
+        img_np,
+        detail=1,
+        paragraph=False,
+        batch_size=4,           # smaller batches — more stable on real photos
+        width_ths=0.8,          # slightly higher: real photos have more spacing
+        height_ths=0.5,
+        contrast_ths=0.05,      # lower — let EasyOCR see more candidates
+        adjust_contrast=0.7,    # let EasyOCR do its own contrast adjustment too
+        text_threshold=0.6,     # confidence threshold for text regions
+        low_text=0.3,           # low text threshold — catch faint characters
     )
     if not results:
         return ""
-    results = [(bbox, text, conf) for bbox, text, conf in results if conf >= 0.20]
+
+    # Lower confidence threshold for real photos — some chars read at 0.3-0.4
+    results = [(bbox, text, conf) for bbox, text, conf in results if conf >= 0.15]
 
     def _sort_key(r):
         bbox = r[0]

@@ -362,33 +362,50 @@ class FoodDetectiveApp:
             if not cap.isOpened():
                 messagebox.showwarning("Camera", "Could not open camera.")
                 return
+
+            # Set camera to higher resolution if supported
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
             win = tk.Toplevel(self.root)
             win.title("Take a photo — press SPACE")
-            win.geometry("640x520")
-            lbl = tk.Label(win)
-            lbl.pack()
-            tk.Label(win, text="SPACE = capture  |  ESC = cancel",
-                     font=("Helvetica Neue", 11)).pack()
+            win.geometry("700x580")
+            win.configure(bg="#1E1E1E")
+
+            # Guidance text
+            tk.Label(win,
+                     text="📷  Hold the label FLAT and CLOSE • Avoid glare • Press SPACE to capture",
+                     bg="#1E1E1E", fg="#90EE90",
+                     font=("Helvetica Neue", 11, "bold")).pack(pady=(8, 2))
+
+            lbl = tk.Label(win, bg="#1E1E1E")
+            lbl.pack(expand=True, fill="both", padx=4)
+
+            tk.Label(win, text="ESC = cancel",
+                     bg="#1E1E1E", fg="#888888",
+                     font=("Helvetica Neue", 9)).pack(pady=(2, 6))
+
             captured = [None]
 
             def update_frame():
                 ret, frame = cap.read()
                 if ret:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    img = Image.fromarray(rgb)
-                    img.thumbnail((620, 460))
-                    photo = ImageTk.PhotoImage(img)
+                    pil_img = Image.fromarray(rgb)
+                    pil_img.thumbnail((680, 480))
+                    photo = ImageTk.PhotoImage(pil_img)
                     lbl.config(image=photo)
                     lbl.image = photo
                     captured[0] = frame
                 if win.winfo_exists():
-                    win.after(30, update_frame)
+                    win.after(33, update_frame)  # ~30fps
 
             def on_key(event):
                 if event.keysym == "space" and captured[0] is not None:
-                    rgb = cv2.cvtColor(captured[0], cv2.COLOR_BGR2RGB)
+                    frame = captured[0]
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     buf = io.BytesIO()
-                    Image.fromarray(rgb).save(buf, format="JPEG", quality=95)
+                    Image.fromarray(rgb).save(buf, format="JPEG", quality=97)
                     self._image_bytes = buf.getvalue()
                     self._show_preview(self._image_bytes)
                     cap.release()
