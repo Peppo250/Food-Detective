@@ -42,8 +42,8 @@ def _get_reader():
 
 def extract_ingredients_from_image(image_bytes: bytes) -> list[str]:
     img = _load(image_bytes)
-    img = _preprocess(img)
-    raw_text = _ocr(img)
+    img_np = _preprocess(img)
+    raw_text = _ocr(img_np)
     corrected_text = correct_ocr_text(raw_text)
     tokens = _parse(corrected_text)
     corrected = [f for tok in tokens if (f := correct_ingredient_token(tok))]
@@ -64,11 +64,12 @@ def _load(image_bytes: bytes) -> Image.Image:
     return Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
 
-def _preprocess(img: Image.Image) -> Image.Image:
+def _preprocess(img: Image.Image) -> np.ndarray:
     """
     Preprocessing pipeline for real phone/webcam photos of food labels.
     Uses OpenCV (Bilateral filter + CLAHE + edge blending) if available,
     otherwise falls back to an optimized Pillow pipeline.
+    Returns a 3-channel RGB numpy array.
     """
     w, h = img.size
 
@@ -88,12 +89,12 @@ def _preprocess(img: Image.Image) -> Image.Image:
     if _HAS_CV2:
         try:
             img_np = np.array(img)
-            processed_np = _preprocess_cv2(img_np)
-            return Image.fromarray(processed_np)
+            return _preprocess_cv2(img_np)
         except Exception:
             pass  # Fall back to Pillow on any OpenCV errors
 
-    return _preprocess_pillow(img)
+    processed_pillow = _preprocess_pillow(img)
+    return np.array(processed_pillow)
 
 
 def _preprocess_cv2(img_np: np.ndarray) -> np.ndarray:
@@ -156,9 +157,8 @@ def _preprocess_pillow(img: Image.Image) -> Image.Image:
 # OCR
 # ---------------------------------------------------------------------------
 
-def _ocr(img: Image.Image) -> str:
+def _ocr(img_np: np.ndarray) -> str:
     reader = _get_reader()
-    img_np = np.array(img)
     results = reader.readtext(
         img_np,
         detail=1,

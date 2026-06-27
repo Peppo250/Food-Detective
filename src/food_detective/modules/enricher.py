@@ -10,15 +10,22 @@ TIMEOUT = 8
 HEADERS = {"User-Agent": "FoodDetectiveKidsApp/1.0 (educational)"}
 
 
-async def enrich_ingredient(name: str) -> dict:
-    async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as client:
-        results = await asyncio.gather(
-            _openfoodfacts(client, name),
-            _openfda(client, name),
-            _wikipedia(client, name),
-            _wikidata(client, name),
-            return_exceptions=True,
-        )
+async def enrich_ingredient(name: str, client: httpx.AsyncClient = None) -> dict:
+    if client is None:
+        async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as local_client:
+            return await _enrich(name, local_client)
+    else:
+        return await _enrich(name, client)
+
+
+async def _enrich(name: str, client: httpx.AsyncClient) -> dict:
+    results = await asyncio.gather(
+        _openfoodfacts(client, name),
+        _openfda(client, name),
+        _wikipedia(client, name),
+        _wikidata(client, name),
+        return_exceptions=True,
+    )
     off, fda, wiki, wd = results
     merged = {"name": name}
     if isinstance(off,  dict): merged.update(off)

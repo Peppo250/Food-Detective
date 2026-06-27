@@ -5,6 +5,7 @@ then emits a daily_advice event at the end.
 """
 import json
 import asyncio
+import httpx
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -24,6 +25,13 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup():
         cache.purge_expired()
+        from food_detective.modules.enricher import TIMEOUT, HEADERS
+        app.state.client = httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS)
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        if hasattr(app.state, "client"):
+            await app.state.client.aclose()
 
     @app.post("/scan")
     async def scan(file: UploadFile = File(...)):
@@ -66,7 +74,7 @@ def create_app() -> FastAPI:
             for i in range(0, len(misses), BATCH):
                 batch = misses[i:i + BATCH]
                 batch_results = await asyncio.gather(
-                    *[_fetch_and_build(name, cache) for name in batch],
+                    *[_fetch_and_build(name, cache, app.state.client) for name in batch],
                     return_exceptions=True,
                 )
                 for name, result in zip(batch, batch_results):
@@ -111,8 +119,8 @@ def create_app() -> FastAPI:
     return app
 
 
-async def _fetch_and_build(name: str, cache: "IngredientCache") -> dict:
-    raw = await enrich_ingredient(name)
+async def _fetch_and_build(name: str, cache: "IngredientCache", client: httpx.AsyncClient) -> dict:
+    raw = await enrich_ingredient(name, client)
     status = score_ingredient(raw)
     explanation = make_kid_explanation(name, status, raw)
     entry = {
