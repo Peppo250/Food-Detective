@@ -1,175 +1,210 @@
 # 🔬 Food Detective
 
-A desktop app for kids (ages 6–12) that reads food labels and explains what every ingredient is — using only free, public APIs. No paid AI services required.
+A child-friendly desktop application (ages 6–12) that reads food labels, demystifies complex chemical ingredients, and calculates daily consumption limits — powered entirely by free, public APIs.
+
+No paid AI services, no subscription models, and no API keys required.
 
 ---
 
-## How it works
+## 📸 Screenshots
 
-1. Take or upload a photo of any food label
-2. Tesseract OCR reads the tiny ingredient text
-3. Each ingredient is checked against OpenFoodFacts, OpenFDA, Wikipedia and Wikidata (all free)
-4. Results stream to the screen in real time — safe ✅, caution ⚠️, or avoid 🚫
-5. Everything is cached for 90 days in SQLite so repeat scans are instant
+*(Screenshots coming soon)*
 
 ---
 
-## Requirements
+## 💡 Motivation
 
-| Requirement | Notes |
-|---|---|
-| Python 3.11+ | Download from python.org |
-| Tesseract OCR engine | See installation below |
-| Internet connection | For first-time ingredient lookups |
+Many modern food products targeting children are packed with artificial colors, preservatives, and processed ingredients. While these ingredients are listed on the packaging, they are often obscured by complex chemical names (e.g. "Sunset Yellow" listed as "E110", or "Sodium Benzoate" hiding under complex text). 
+
+**Food Detective** was built to empower kids and parents:
+1. **Demystification**: Explaining what "BHA" or "Tartrazine" actually is in simple, child-friendly terms (e.g., "Tartrazine is a bright yellow dye made from chemicals").
+2. **Actionable Limits**: Translating scientific terms like "Acceptable Daily Intake (ADI)" into physical portions, such as "max 1 serving per day" for a child.
+3. **Data Independence**: Operating purely on free, open databases (OpenFoodFacts, OpenFDA, Wikipedia, and Wikidata) to keep educational tools accessible to everyone.
 
 ---
 
-## Step 1 — Install Tesseract
+## 🚀 Features
 
-Tesseract is the OCR engine that reads the text on food labels.
+* **Smart Preprocessing Pipeline**: Adapts automatically to image quality. When OpenCV is installed, it leverages a **Bilateral Filter** (to remove sensor grain while preserving text edges) and **CLAHE** (to equalize contrast on curved packaging and under uneven lighting).
+* **Deep Learning OCR**: Utilizes **EasyOCR** (PyTorch) to perform high-accuracy character recognition on noisy, real-world label photos.
+* **Concurrent API Scraping**: Fires parallel requests to 4 free public APIs concurrently using `asyncio.gather`, compiling data from OpenFoodFacts, OpenFDA, Wikipedia, and Wikidata.
+* **Safety Scorer**: Categories ingredients using strict word boundaries into four categories:
+  * ✅ **Safe**: Natural, whole foods (e.g. oats, water, fruits).
+  * ⚠️ **Caution**: Processed ingredients to limit (e.g. palm oil, sugar, sodium).
+  * 🚫 **Avoid**: Lab-made chemicals, artificial colors, or additives linked to hyperactivity/allergies (e.g. Red 40, MSG, Aspartame).
+  * ☠️ **Toxic/Not Food**: Industrial or cleaning chemicals (e.g. bleach, isopropyl alcohol).
+* **Kid-Friendly Explainer**: Simplifies complex scientific summaries (e.g. replacing words like "synthesized" with "made in a lab") and provides clear guidance.
+* **Serving Limit Calculator**: Automatically extracts serving size (grams) and nutrient levels (sugar, sodium, saturated fat) from the label, calculating how many servings are safe per day for a reference **20 kg child (ages 4–8)**.
+* **SQLite Cache**: Stores queried ingredients locally for **90 days** (with automatic background cleanup) so repeat scans are instant.
+* **Multithreaded GUI**: Keeps the Tkinter interface fluid and responsive using a thread-safe message queue, streaming backend events (OCR progress, API fetches) in real-time.
 
-### Windows
-1. Download the installer: https://github.com/UB-Mannheim/tesseract/wiki
-2. Run the `.exe` installer (keep the default install path)
-3. Tesseract will be at: `C:\Program Files\Tesseract-OCR\tesseract.exe`
-4. Add it to your PATH, or set the path in your environment:
-   ```
-   setx TESSERACT_CMD "C:\Program Files\Tesseract-OCR\tesseract.exe"
-   ```
+---
 
-### macOS
-```bash
-brew install tesseract
+## 🛠️ Tech Stack
+
+* **Frontend**: Python Tkinter, Pillow (Image Handling)
+* **Backend**: FastAPI, Uvicorn, HTTPX (Async HTTP Client)
+* **Computer Vision**: OpenCV (Optional/Adaptive Preprocessing), EasyOCR (PyTorch-based OCR)
+* **Fuzzy Matching**: RapidFuzz (for correcting OCR read errors against known vocabulary)
+* **Database**: SQLite3
+* **Testing**: Pytest
+
+---
+
+## 📐 Architecture
+
+Food Detective separates concerns between its desktop GUI and its backend service:
+
 ```
-
-### Ubuntu / Debian Linux
-```bash
-sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+[Tkinter Desktop App] <-- (SSE Stream) -- [Local FastAPI Server]
+         |                                        |
+ (Launches server)                        (Runs OCR in thread)
+         |                                        |
+         v                                        v
+  [main.py Wrapper]                     [EasyOCR + Preprocessing]
+                                                  |
+                                          (Queries APIs / DB)
+                                                  |
+                                                  v
+                                     [SQLite3 Cache & Public APIs]
 ```
+For more detailed pipeline diagrams, see the [Architecture Documentation](docs/architecture.md).
 
 ---
 
-## Step 2 — Set up Python environment
+## 📂 Folder Structure
 
-Open a terminal (or Command Prompt on Windows) and run:
-
-```bash
-# Clone or download the project folder, then navigate into it
-cd food_detective
-
-# Create a virtual environment
-python -m venv venv
-
-# Activate it
-# On Windows:
-venv\Scripts\activate
-# On macOS / Linux:
-source venv/bin/activate
-
-# Install all dependencies
-pip install -r requirements.txt
-```
-
-**Note:** `opencv-python` (for camera capture) is optional. If it fails to install on your system, remove it from `requirements.txt` — the app will still work for file uploads, just without the camera button.
-
----
-
-## Step 3 — Run the app
-
-```bash
-python main.py
-```
-
-The app window will open. That's it!
-
----
-
-## Project structure
+The project is structured as a clean, modular Python package:
 
 ```
 food_detective/
 │
-├── main.py               ← Entry point: starts server + UI
-├── app.py                ← FastAPI backend with SSE streaming
-├── ui.py                 ← Tkinter UI (child-friendly interface)
-├── requirements.txt      ← Python dependencies
+├── main.py               ← Bootstrapper (sets sys.path and runs app)
+├── requirements.txt      ← Python dependencies (including Pytest & FastAPI)
+├── LICENSE               ← Open-source license (MIT)
 │
-├── modules/
-│   ├── ocr.py            ← Image preprocessing + Tesseract OCR + text parser
-│   ├── cache.py          ← SQLite cache (90-day TTL, auto-cleanup)
-│   ├── enricher.py       ← Async parallel API fetcher (4 sources)
-│   ├── scorer.py         ← Rule-based safety classifier
-│   └── explainer.py      ← Kid-friendly text generator
+├── src/                  ← Source directory
+│   └── food_detective/   ← Main package namespace
+│       ├── main.py       ← Core coordinator (starts Uvicorn & Tkinter)
+│       ├── app.py        ← FastAPI web endpoints and SSE generators
+│       ├── ui.py         ← Tkinter widget layout & camera loops
+│       └── modules/      ← Core business logic
+│           ├── cache.py        ← SQLite connection and purge handlers
+│           ├── daily_limits.py ← Safe serving thresholds and OCR unit parsers
+│           ├── enricher.py     ← Asynchronous HTTP API crawlers
+│           ├── explainer.py    ← Simplification templates and keyword matching
+│           ├── ocr.py          ← OpenCV image filters and EasyOCR reader
+│           ├── ocr_correct.py  ← Typo lookup sets and fuzzy match cutoffs
+│           └── scorer.py       ← RegEx vocabulary and score evaluation
 │
+├── tests/                ← Unit testing suite (Pytest)
+│   ├── conftest.py       ← Test path configuration
+│   ├── test_cache.py     ← Database test cases
+│   ├── test_explainer.py ← Explanation matching checks
+│   └── test_scorer.py    ← Scoring logic checks
+│
+├── scripts/              ← Developer utility scripts
+│   └── run.py            ← Direct runner script (auto-resolves paths)
+│
+├── docs/                 ← Project design documents
+│   ├── architecture.md   ← System blueprints
+│   └── APIS.md           ← External endpoint references
+│
+├── assets/               ← Visual assets & mockups
+├── examples/             ← Test labels for verification
 └── data/
-    └── ingredients.db    ← Auto-created SQLite database (cache)
+    └── ingredients.db    ← SQLite database (ignored in git)
 ```
 
 ---
 
-## Free APIs used
+## 📥 Installation
 
-| API | What it provides | Rate limit |
-|---|---|---|
-| **OpenFoodFacts** | Additive data, E-numbers, risk levels | No limit (please be polite) |
-| **OpenFDA** | FDA adverse event reports, GRAS status | 1000 req/day without key |
-| **Wikipedia REST** | Plain English ingredient summaries | No limit |
-| **Wikidata SPARQL** | Structured properties (CAS, hazard flags) | No limit |
+### Prerequisites
+* **Python 3.11+** installed on your system.
+* An active internet connection (required for the first run to download model weights and libraries).
 
-No API keys needed for any of these.
-
----
-
-## Tips for best results
-
-- **Good lighting** makes OCR much more accurate
-- **Lay the package flat** so the label isn't curved
-- **Get close** — the label should fill most of the photo
-- **Avoid glare** from shiny packaging — tilt slightly
-
----
-
-## Cache management
-
-The SQLite cache lives at `data/ingredients.db`. It:
-- Stores results for **90 days**
-- Auto-deletes expired entries on every app start
-- Also runs a daily background cleanup
-
-To clear the cache manually:
+### Step 1: Clone the repository
 ```bash
-rm data/ingredients.db
+git clone https://github.com/Peppo250/Food-Detective.git
+cd Food-Detective
 ```
 
+### Step 2: Set up a Virtual Environment
+```bash
+# Create environment
+python -m venv venv
+
+# Activate environment
+# On Windows:
+venv\Scripts\activate
+# On macOS / Linux:
+source venv/bin/activate
+```
+
+### Step 3: Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+> [!NOTE]
+> * EasyOCR relies on **PyTorch** (~1.5 GB). The installation may take several minutes depending on your connection.
+> * If `opencv-python` fails to compile on your system, you can remove it from `requirements.txt`. The application will automatically fall back to standard Pillow-based image filtering.
+
 ---
 
-## Ingredient safety classification
+## 🎮 Usage
 
-| Label | Meaning |
-|---|---|
-| ✅ Safe | Natural, whole-food ingredients |
-| ⚠️ Caution | Processed but not directly harmful — limit quantity |
-| 🚫 Avoid | Linked to hyperactivity, allergies, or cancer risk in studies |
-| ❓ Unknown | Not enough data found |
+### Running the App
+Execute the bootstrapper script from the project root:
+```bash
+python main.py
+```
+*Alternatively, you can run the developer script:*
+```bash
+python scripts/run.py
+```
 
-The avoid list includes: artificial colours (Red 40, Yellow 5/6, Blue 1), sodium benzoate, BHA, BHT, TBHQ, sodium nitrate/nitrite, aspartame, saccharin, MSG, HFCS, trans fats, and carrageenan.
+### Scanning a Label
+1. **Choose Source**: Click **Pick from Files** to upload an image, or click **Take a Photo** to launch the camera preview.
+2. **Align Camera (if using Webcam)**: Hold the ingredient label flat and close to the camera. Press `SPACE` to capture, or `ESC` to cancel.
+3. **Analyze**: Click **Scan Ingredients!**.
+4. **View Streams**: Watch the safety ratings and child-friendly explanations stream in real-time. Review the **Daily Limit Guide** panel on the right.
+5. **Debug**: Toggle the **Debug / Raw Output** tab to see raw OCR reads, fuzzy matches, and API responses.
 
 ---
 
-## Troubleshooting
+## ⚙️ Configuration
 
-**"No ingredients found — try a clearer photo!"**
-→ The OCR couldn't read the label. Try better lighting or get closer.
+Key configurations are accessible in the following files:
+* **Database path & TTL**: Adjusted inside [cache.py](file:///C:/Users/Porchezhian/Documents/GitHub/Food-Detective/src/food_detective/modules/cache.py). Cache duration is set via `TTL_SECONDS` (default: 90 days).
+* **Reference Child Weight**: Specified inside [daily_limits.py](file:///C:/Users/Porchezhian/Documents/GitHub/Food-Detective/src/food_detective/modules/daily_limits.py) via `child_kg` (default: 20 kg).
+* **API Timeouts**: Configured inside [enricher.py](file:///C:/Users/Porchezhian/Documents/GitHub/Food-Detective/src/food_detective/modules/enricher.py) via `TIMEOUT` (default: 8 seconds).
 
-**App hangs on startup**
-→ The server takes ~1 second to start. Wait a moment after opening.
+---
 
-**Slow on first scan of a new product**
-→ Normal — the app is fetching from 4 APIs simultaneously. After the first scan, results are cached and will be instant.
+## 📈 Performance & Results
 
-**Camera not working**
-→ Make sure `opencv-python` is installed (`pip install opencv-python`). Check your system's camera permissions.
+* **Cached Scans**: **~0.05 seconds**. Repeat scans are nearly instantaneous as they read directly from local SQLite storage.
+* **Fresh Scans**: **~1.5 to 4 seconds** (depending on network latency and internet speeds), since API requests are dispatched in parallel.
+* **OCR Typo Accuracy**: The integration of **RapidFuzz** provides a correction buffer for characters misread due to curved packaging (e.g. automatically matching `"barlev"` to `"barley"`).
 
-**Tesseract not found error**
-→ Make sure Tesseract is installed and in your PATH. On Windows, restart your terminal after installation.
+---
+
+## 🔮 Future Work
+
+* **PyInstaller Executable**: Creating a single-click installer (`.exe` / `.app`) that packages Python, Tkinter, and runtime dependencies for non-technical users.
+* **Barcode Scanner Integration**: Allowing users to simply scan a barcode to fetch ingredient data directly from OpenFoodFacts, bypassing OCR entirely when barcodes are clear.
+* **Allergen Alert Profiles**: Letting parents configure custom profiles (e.g., "Nut Allergy" or "Gluten Sensitivity") that trigger custom warning banners regardless of safety scores.
+* **Multi-Child Portions**: Adding a slider to adjust the child's age or weight (e.g. from 15kg to 40kg) to scale daily intake limits dynamically.
+
+---
+
+## 👥 Contributors
+
+* **Porchezhian** (Maintainer) - [GitHub Profile](https://github.com/Peppo250)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

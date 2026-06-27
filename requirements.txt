@@ -1,9 +1,14 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-httpx==0.27.0
-pillow==10.3.0
-easyocr==1.7.1
-numpy==1.26.4
-requests==2.31.0
-rapidfuzz==3.9.3
-opencv-python==4.9.0.80
+# Web server & API framework (Core backend infrastructure)
+fastapi==0.111.0          # High-performance async API server framework
+uvicorn[standard]==0.29.0 # ASGI server implementation to run FastAPI backend
+httpx==0.27.0             # Async HTTP client for concurrent API calls in enricher.py
+requests==2.31.0          # Synchronous HTTP client for health check polling and UI queries
+
+# Image processing & Computer Vision
+pillow==10.3.0            # Image manipulation library used for Tkinter rendering and OCR preparation
+opencv-python==4.9.0.80   # Optional/Adaptive preprocessing (CLAHE, bilateral filter) & camera stream
+
+# Optical Character Recognition (OCR) & Fuzzy matching
+easyocr==1.7.1            # Deep-learning OCR model package (runs PyTorch internally)
+numpy==1.26.4             # Scientific computing (required for image matrix preprocessing)
+rapidfuzz==3.9.3          # Fast string fuzzy matching for typo corrections

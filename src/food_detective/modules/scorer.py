@@ -192,11 +192,9 @@ def score_ingredient(data: dict) -> str:
     e = data.get("e_number", "").lower()
     if e and _matches_any(e, AVOID):  return "avoid"
     if data.get("fda_adverse_events", 0) > 500: return "avoid"
-    if data.get("wikidata_hazard"):   return "caution"
     if _matches_any(name, CAUTION):   return "caution"
     if data.get("palm_oil"):          return "caution"
     if _matches_any(name, SAFE):      return "safe"
-    if data.get("fda_gras"):          return "safe"
     if data.get("vegan") and data.get("fda_adverse_events", 0) == 0: return "safe"
     return "unknown"
 

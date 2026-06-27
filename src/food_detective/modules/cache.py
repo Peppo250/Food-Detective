@@ -8,8 +8,9 @@ import time
 import threading
 import os
 import re
+import contextlib
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "ingredients.db")
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "ingredients.db"))
 TTL_SECONDS = 90 * 24 * 60 * 60   # 90 days
 CLEANUP_INTERVAL = 24 * 60 * 60   # 1 day
 
@@ -65,10 +66,16 @@ class IngredientCache:
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_expires ON ingredients(expires_at)")
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self):
         con = sqlite3.connect(self._db_path, check_same_thread=False)
         con.row_factory = sqlite3.Row
-        return con
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
+
 
     def _start_cleanup_scheduler(self):
         def _loop():

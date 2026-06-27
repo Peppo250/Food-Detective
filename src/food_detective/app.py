@@ -8,12 +8,12 @@ import asyncio
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from modules.ocr import extract_ingredients_from_image
-from modules.cache import IngredientCache
-from modules.enricher import enrich_ingredient
-from modules.scorer import score_ingredient, overall_score
-from modules.explainer import make_kid_explanation
-from modules.daily_limits import compute_product_advice
+from food_detective.modules.ocr import extract_ingredients_from_image
+from food_detective.modules.cache import IngredientCache
+from food_detective.modules.enricher import enrich_ingredient
+from food_detective.modules.scorer import score_ingredient, overall_score
+from food_detective.modules.explainer import make_kid_explanation
+from food_detective.modules.daily_limits import compute_product_advice
 
 
 def create_app() -> FastAPI:
@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
             yield _sse("status", {"message": "Reading the label..."})
 
             try:
-                ingredients = extract_ingredients_from_image(image_bytes)
+                ingredients = await asyncio.to_thread(extract_ingredients_from_image, image_bytes)
             except Exception as e:
                 yield _sse("error", {"message": f"Could not read label: {e}"})
                 return
@@ -103,12 +103,6 @@ def create_app() -> FastAPI:
                 pass  # daily advice is best-effort
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-    @app.post("/scan_with_nutrition")
-    async def scan_with_nutrition(file: UploadFile = File(...), ocr_text: str = ""):
-        """Extended endpoint that accepts raw OCR text for nutrition parsing."""
-        # Placeholder — UI can POST ocr_text alongside image in future
-        pass
 
     @app.get("/health")
     async def health():

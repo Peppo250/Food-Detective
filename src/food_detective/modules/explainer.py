@@ -83,7 +83,10 @@ def make_kid_explanation(name: str, status: str, data: dict) -> str:
 
     key = name.lower().strip()
     for known_key, (s1, s2) in _KNOWN.items():
-        if known_key in key or key in known_key:
+        # Match using word boundaries to prevent generic keys (e.g. 'oil') 
+        # from matching specific complex keys (e.g. 'hydrogenated vegetable oil')
+        pattern = r'(?<![a-z0-9])' + re.escape(known_key) + r'(?![a-z0-9])'
+        if re.search(pattern, key):
             return s1 + " " + s2
 
     wiki = data.get("summary", "")

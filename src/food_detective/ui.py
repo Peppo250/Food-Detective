@@ -13,7 +13,9 @@ import time
 from PIL import Image, ImageTk
 import queue
 
-API_BASE = "http://127.0.0.1:8765"
+PORT = os.getenv("FOOD_DETECTIVE_PORT", "8765")
+HOST = os.getenv("FOOD_DETECTIVE_HOST", "127.0.0.1")
+API_BASE = f"http://{HOST}:{PORT}"
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 BG           = "#F7F9F3"
@@ -366,6 +368,9 @@ class FoodDetectiveApp:
             # Set camera to higher resolution if supported
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+            cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)    # Enable autofocus for closeups
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # Limit buffer size to 1 to reduce lag and capture current frame
+
 
             win = tk.Toplevel(self.root)
             win.title("Take a photo — press SPACE")

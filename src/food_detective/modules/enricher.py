@@ -95,9 +95,8 @@ async def _wikipedia(client, name):
 
 _SPARQL = "https://query.wikidata.org/sparql"
 _SPARQL_Q = """
-SELECT ?item ?cas ?e_number WHERE {{
+SELECT ?item ?e_number WHERE {{
   ?item rdfs:label "{name}"@en.
-  OPTIONAL {{ ?item wdt:P231 ?cas. }}
   OPTIONAL {{ ?item wdt:P628 ?e_number. }}
 }} LIMIT 1
 """
@@ -106,9 +105,11 @@ SELECT ?item ?cas ?e_number WHERE {{
 async def _wikidata(client, name):
     result = {}
     try:
+        # Escape backslashes and double quotes to prevent SPARQL query breaks
+        clean_name = name.lower().replace('\\', '\\\\').replace('"', '\\"')
         r = await client.get(
             _SPARQL,
-            params={"query": _SPARQL_Q.format(name=name.lower()), "format": "json"},
+            params={"query": _SPARQL_Q.format(name=clean_name), "format": "json"},
             headers={**HEADERS, "Accept": "application/sparql-results+json"})
         if r.status_code == 200:
             bindings = r.json().get("results", {}).get("bindings", [])

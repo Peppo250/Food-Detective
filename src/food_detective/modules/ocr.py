@@ -7,7 +7,14 @@ import re
 import io
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
-from modules.ocr_correct import correct_ocr_text, correct_ingredient_token, merge_split_tokens
+from food_detective.modules.ocr_correct import correct_ocr_text, correct_ingredient_token, merge_split_tokens
+
+try:
+    import cv2
+    _HAS_CV2 = True
+except ImportError:
+    _HAS_CV2 = False
+
 
 _reader = None
 
@@ -59,73 +66,90 @@ def _load(image_bytes: bytes) -> Image.Image:
 
 def _preprocess(img: Image.Image) -> Image.Image:
     """
-    Preprocessing pipeline for real phone photos of food labels.
-
-    Handles the hardest cases:
-      - Curved / cylindrical packaging (local contrast instead of global)
-      - Metallic / foil backgrounds with glare (glare masking)
-      - Coloured backgrounds — red, orange, silver (work in greyscale)
-      - Images already large (no unnecessary upscale)
-      - Small/poor quality images (gentle upscale only if needed)
+    Preprocessing pipeline for real phone/webcam photos of food labels.
+    Uses OpenCV (Bilateral filter + CLAHE + edge blending) if available,
+    otherwise falls back to an optimized Pillow pipeline.
     """
     w, h = img.size
 
-    # ── Step 1: Smart resize ─────────────────────────────────────────────
-    # Phone cameras produce 2000–4000px images. EasyOCR slows down hugely
-    # above ~2000px with diminishing returns. Downscale oversized images.
-    # Only upscale if genuinely small (e.g. cropped thumbnail < 600px).
+    # Smart resize: optimize dimensions for text extraction speed/accuracy
     MAX_DIM = 2000
     MIN_DIM = 600
-
     long_side = max(w, h)
     short_side = min(w, h)
 
     if long_side > MAX_DIM:
         scale = MAX_DIM / long_side
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        w, h = img.size
     elif short_side < MIN_DIM:
         scale = MIN_DIM / short_side
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        w, h = img.size
 
-    # ── Step 2: Glare / highlight suppression ────────────────────────────
-    # Foil and metallic packaging reflects light into blown-out white
-    # patches. These look like valid background to OCR but confuse the
-    # text detector. Replace very bright pixels with mid-grey.
+    if _HAS_CV2:
+        try:
+            img_np = np.array(img)
+            processed_np = _preprocess_cv2(img_np)
+            return Image.fromarray(processed_np)
+        except Exception:
+            pass  # Fall back to Pillow on any OpenCV errors
+
+    return _preprocess_pillow(img)
+
+
+def _preprocess_cv2(img_np: np.ndarray) -> np.ndarray:
+    # Convert to grayscale
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    
+    # 1. Denoise with Bilateral Filter: preserves text boundaries while smoothing out sensor noise
+    denoised = cv2.bilateralFilter(gray, d=5, sigmaColor=50, sigmaSpace=50)
+    
+    # 2. Local Contrast Enhancement with CLAHE: corrects uneven lighting and shadows on curved surfaces
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
+    
+    # 3. Gentle Sharpening (blend Laplician sharpened edges with CLAHE output)
+    kernel = np.array([[-1, -1, -1],
+                       [-1,  9, -1],
+                       [-1, -1, -1]], dtype=np.float32)
+    sharpened = cv2.filter2D(enhanced, -1, kernel)
+    # Blend: 75% CLAHE output, 25% sharpened edges
+    blended = cv2.addWeighted(enhanced, 0.75, sharpened, 0.25, 0.0)
+    
+    return cv2.cvtColor(blended, cv2.COLOR_GRAY2RGB)
+
+
+def _preprocess_pillow(img: Image.Image) -> Image.Image:
+    w, h = img.size
+    
+    # 1. Glare suppression: target pure white specular glare without washing out white-on-dark text
     arr = np.array(img, dtype=np.float32)
-    glare_mask = np.all(arr > 215, axis=2)           # blown-out pixels
-    arr[glare_mask] = 175                             # replace with mid-grey
+    glare_mask = np.all(arr > 230, axis=2)
+    arr[glare_mask] = 180
     img = Image.fromarray(arr.astype(np.uint8))
-
-    # ── Step 3: Convert to greyscale ────────────────────────────────────
-    # Coloured backgrounds (red/orange/silver) interfere with contrast
-    # enhancement in RGB. Work in greyscale from here.
-    img = img.convert("L")
-
-    # ── Step 4: Local contrast enhancement (CLAHE substitute) ───────────
-    # Standard global contrast fails on curved packaging because the
-    # background brightness varies across the image.
-    # Unsharp mask with a large radius boosts text relative to local bg.
-    blur_radius = max(15, min(w, h) // 25)  # adaptive: ~4% of short side
-    blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-    arr_g = np.array(img, dtype=np.float32)
+    
+    # 2. Convert to grayscale
+    img_gray = img.convert("L")
+    
+    # 3. Reduce camera grain with a Median Filter
+    img_denoised = img_gray.filter(ImageFilter.MedianFilter(size=3))
+    
+    # 4. Local contrast via unsharp masking (controlled strength to avoid pixelation)
+    blur_radius = max(15, min(w, h) // 25)
+    blurred = img_denoised.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    arr_g = np.array(img_denoised, dtype=np.float32)
     arr_b = np.array(blurred, dtype=np.float32)
-    # Unsharp mask: add back the difference between original and blurred
-    strength = 2.2
+    
+    strength = 1.2
     enhanced = arr_g + strength * (arr_g - arr_b)
     enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
-    img = Image.fromarray(enhanced)
+    img_enhanced = Image.fromarray(enhanced)
+    
+    # 5. Global contrast and single sharpen pass
+    img_final = ImageEnhance.Contrast(img_enhanced).enhance(1.4)
+    img_final = img_final.filter(ImageFilter.SHARPEN)
+    
+    return img_final.convert("RGB")
 
-    # ── Step 5: Global contrast + double sharpen ─────────────────────────
-    img = ImageEnhance.Contrast(img).enhance(1.8)
-    img = img.filter(ImageFilter.SHARPEN)
-    img = img.filter(ImageFilter.SHARPEN)  # second pass for soft/blurry photos
-
-    # ── Step 6: Convert back to RGB for EasyOCR ──────────────────────────
-    img = img.convert("RGB")
-
-    return img
 
 
 # ---------------------------------------------------------------------------

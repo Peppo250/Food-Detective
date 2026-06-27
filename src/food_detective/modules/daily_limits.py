@@ -14,7 +14,9 @@ can interpret numbers loosely — the limits are always conservative.
 import re
 from dataclasses import dataclass
 from typing import Optional
+import os
 
+DEFAULT_CHILD_WEIGHT = float(os.getenv("FOOD_DETECTIVE_CHILD_WEIGHT", "20.0"))
 
 # ---------------------------------------------------------------------------
 # Daily limit database
@@ -26,7 +28,7 @@ class DailyLimit:
     limit_g: float          # flat daily limit in grams (0 = use ADI calc)
     unit: str = "g"
     adi_per_kg: float = 0.0 # EFSA/WHO ADI in mg per kg bodyweight (0 = not set)
-    child_kg: float = 20.0  # reference child weight
+    child_kg: float = DEFAULT_CHILD_WEIGHT  # reference child weight
     source: str = ""
     notes: str = ""
 
@@ -306,7 +308,7 @@ def compute_product_advice(
                 advice_list.append(adv)
 
     # 3. Flag ALL AVOID-list ingredients for the warning section
-    from modules.scorer import AVOID as AVOID_SET
+    from food_detective.modules.scorer import AVOID as AVOID_SET
     avoid_found = [
         ing for ing in ingredients
         if ing.lower().strip() in AVOID_SET
